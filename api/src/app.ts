@@ -1,8 +1,12 @@
 import express from "express";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware";
+import { requestLogger } from "./middlewares/request-logger.middleware";
 
 const app = express();
+
+// Request logging
+app.use(requestLogger);
 
 // Body parsing
 app.use(express.json());
