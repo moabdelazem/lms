@@ -12,9 +12,10 @@ const app = express();
 app.use(requestLogger);
 
 // CORS
+const corsOrigins = config.cors.origins;
 app.use(
   cors({
-    origin: config.cors.origins,
+    origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins,
     credentials: config.cors.credentials,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id"],
