@@ -42,10 +42,14 @@ WORKDIR /app
 COPY --from=deps --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
 COPY --chown=nodejs:nodejs package.json ./
+COPY --chown=nodejs:nodejs prisma ./prisma
+COPY --chown=nodejs:nodejs entrypoint.sh ./
+
+RUN chmod +x entrypoint.sh
 
 ENV NODE_ENV=production
 USER nodejs
 
 EXPOSE 6767
 
-CMD ["node", "dist/server.js"]
+ENTRYPOINT ["./entrypoint.sh"]

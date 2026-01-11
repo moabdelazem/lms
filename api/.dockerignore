@@ -1,13 +1,13 @@
 # Dependencies
 node_modules
 
+# Build output
+dist
+
 # Environment
 .env
 .env.*
 !.env.example
-
-# Build output
-dist
 
 # Version control
 .git
@@ -16,8 +16,6 @@ dist
 # IDE
 .vscode
 .idea
-*.swp
-*.swo
 
 # Documentation
 *.md
