@@ -1,0 +1,46 @@
+# Dependencies
+node_modules
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build output
+dist
+
+# Version control
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests
+__tests__
+*.test.ts
+*.spec.ts
+coverage
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Package managers
+yarn.lock
+pnpm-lock.yaml
+
+# Scripts (not needed in image)
+scripts
