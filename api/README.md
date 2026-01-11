@@ -78,6 +78,10 @@ Environment variables are configured in the `.env` file:
 | `PORT` | Server port | `6767` |
 | `NODE_ENV` | Environment mode | `development` |
 | `DATABASE_URL` | PostgreSQL connection string | Required |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins | `*` |
+| `CORS_CREDENTIALS` | Enable credentials in CORS | `true` |
+| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown timeout | `10000` |
+| `LOG_LEVEL` | Log level | `info` |
 
 Example `.env` file:
 
@@ -85,6 +89,10 @@ Example `.env` file:
 PORT=6767
 NODE_ENV=development
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres?schema=public"
+CORS_ORIGINS="*"
+CORS_CREDENTIALS=true
+SHUTDOWN_TIMEOUT_MS=10000
+LOG_LEVEL=info
 ```
 
 ---

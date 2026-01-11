@@ -1,5 +1,8 @@
 import express from "express";
+import cors from "cors";
+import config from "./config/config";
 import routes from "./routes";
+import healthRoutes from "./routes/health.routes";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/request-logger.middleware";
 
@@ -8,13 +11,21 @@ const app = express();
 // Request logging
 app.use(requestLogger);
 
+// CORS
+app.use(
+  cors({
+    origin: config.cors.origins,
+    credentials: config.cors.credentials,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id"],
+  })
+);
+
 // Body parsing
 app.use(express.json());
 
-// Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
+// Health endpoints (outside /api for Kubernetes probes)
+app.use(healthRoutes);
 
 // API routes
 app.use("/api", routes);
