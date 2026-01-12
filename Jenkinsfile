@@ -8,6 +8,15 @@ pipeline {
         DOCKER_CREDENTIALS = 'docker-hub-credentials'
         API_IMAGE = "${DOCKER_USERNAME}/${APP_NAME}-api"
         WEB_IMAGE = "${DOCKER_USERNAME}/${APP_NAME}-web"
+        TRIVY_SEVERITY = 'CRITICAL'
+        TRIVY_EXIT_CODE = '0'  // Set to '1' to fail on vulnerabilities
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     stages {
@@ -17,11 +26,16 @@ pipeline {
                 script {
                     env.COMMIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.BUILD_TAG = "${env.COMMIT_SHA}-${env.BUILD_NUMBER}"
+                    env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    
+                    echo "Branch: ${env.GIT_BRANCH_NAME}"
+                    echo "Commit: ${env.COMMIT_SHA}"
+                    echo "Build Tag: ${env.BUILD_TAG}"
                 }
             }
         }
 
-        stage('Lint') {
+        stage('Lint & Audit') {
             agent {
                 docker {
                     image 'node:22-bookworm-slim'
@@ -35,6 +49,7 @@ pipeline {
                 dir('api') {
                     sh 'npm ci'
                     sh 'npm run lint'
+                    sh 'npm audit --audit-level=critical || true'
                 }
             }
         }
@@ -45,7 +60,6 @@ pipeline {
                     steps {
                         script {
                             docker.build("${API_IMAGE}:${BUILD_TAG}", "-f api/Dockerfile api")
-                            docker.build("${API_IMAGE}:latest", "-f api/Dockerfile api")
                         }
                     }
                 }
@@ -53,7 +67,43 @@ pipeline {
                     steps {
                         script {
                             docker.build("${WEB_IMAGE}:${BUILD_TAG}", "--build-arg VITE_API_URL=/api -f web/Dockerfile web")
-                            docker.build("${WEB_IMAGE}:latest", "--build-arg VITE_API_URL=/api -f web/Dockerfile web")
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            parallel {
+                stage('Scan API Image') {
+                    steps {
+                        script {
+                            sh """
+                                docker run --rm \
+                                    -v /var/run/docker.sock:/var/run/docker.sock \
+                                    aquasec/trivy:latest image \
+                                    --exit-code ${TRIVY_EXIT_CODE} \
+                                    --severity ${TRIVY_SEVERITY} \
+                                    --format table \
+                                    --ignore-unfixed \
+                                    ${API_IMAGE}:${BUILD_TAG}
+                            """
+                        }
+                    }
+                }
+                stage('Scan Web Image') {
+                    steps {
+                        script {
+                            sh """
+                                docker run --rm \
+                                    -v /var/run/docker.sock:/var/run/docker.sock \
+                                    aquasec/trivy:latest image \
+                                    --exit-code ${TRIVY_EXIT_CODE} \
+                                    --severity ${TRIVY_SEVERITY} \
+                                    --format table \
+                                    --ignore-unfixed \
+                                    ${WEB_IMAGE}:${BUILD_TAG}
+                            """
                         }
                     }
                 }
@@ -62,7 +112,7 @@ pipeline {
 
         stage('Push Docker Images') {
             when {
-                branch 'main'
+                expression { env.GIT_BRANCH_NAME == 'main' || env.BRANCH_NAME == 'main' }
             }
             steps {
                 script {
@@ -73,55 +123,18 @@ pipeline {
                     )]) {
                         sh 'echo $DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u $DOCKER_USER --password-stdin'
                         
-                        // Push API images
+                        // Tag and push API images
+                        sh "docker tag ${API_IMAGE}:${BUILD_TAG} ${API_IMAGE}:latest"
                         sh "docker push ${API_IMAGE}:${BUILD_TAG}"
                         sh "docker push ${API_IMAGE}:latest"
                         
-                        // Push Web images
+                        // Tag and push Web images
+                        sh "docker tag ${WEB_IMAGE}:${BUILD_TAG} ${WEB_IMAGE}:latest"
                         sh "docker push ${WEB_IMAGE}:${BUILD_TAG}"
                         sh "docker push ${WEB_IMAGE}:latest"
                     }
-                }
-            }
-        }
-
-        stage('Security Scan') {
-            steps {
-                script {
-                    // Scan API image with Trivy 
-                    sh """
-                        docker run --rm \
-                            -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v ${WORKSPACE}:/workspace \
-                            aquasec/trivy:latest image \
-                            --exit-code 0 \
-                            --severity CRITICAL \
-                            --format table \
-                            ${API_IMAGE}:${BUILD_TAG}
-                    """
                     
-                    // Scan Web image with Trivy
-                    sh """
-                        docker run --rm \
-                            -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v ${WORKSPACE}:/workspace \
-                            aquasec/trivy:latest image \
-                            --exit-code 0 \
-                            --severity CRITICAL \
-                            --format table \
-                            ${WEB_IMAGE}:${BUILD_TAG}
-                    """
-                }
-            }
-        }
-
-        stage('Cleanup') {
-            steps {
-                script {
-                    sh "docker rmi ${API_IMAGE}:${BUILD_TAG} || true"
-                    sh "docker rmi ${API_IMAGE}:latest || true"
-                    sh "docker rmi ${WEB_IMAGE}:${BUILD_TAG} || true"
-                    sh "docker rmi ${WEB_IMAGE}:latest || true"
+                    echo "Successfully pushed images to ${DOCKER_REGISTRY}"
                 }
             }
         }
@@ -129,16 +142,40 @@ pipeline {
 
     post {
         always {
-            sh 'docker system prune -af --volumes || true'
+            script {
+                // Clean up built images
+                sh "docker rmi ${API_IMAGE}:${BUILD_TAG} || true"
+                sh "docker rmi ${API_IMAGE}:latest || true"
+                sh "docker rmi ${WEB_IMAGE}:${BUILD_TAG} || true"
+                sh "docker rmi ${WEB_IMAGE}:latest || true"
+                
+                // Prune unused Docker resources
+                sh 'docker system prune -f || true'
+            }
             cleanWs()
         }
         success {
-            echo "Pipeline completed successfully!"
-            echo "API Image: ${API_IMAGE}:${BUILD_TAG}"
-            echo "Web Image: ${WEB_IMAGE}:${BUILD_TAG}"
+            echo """
+            ==========================================
+            Pipeline completed successfully!
+            ==========================================
+            Branch: ${env.GIT_BRANCH_NAME}
+            Commit: ${env.COMMIT_SHA}
+            API Image: ${API_IMAGE}:${BUILD_TAG}
+            Web Image: ${WEB_IMAGE}:${BUILD_TAG}
+            ==========================================
+            """
         }
         failure {
-            echo "Pipeline failed. Check the logs for details."
+            echo """
+            ==========================================
+            Pipeline FAILED!
+            ==========================================
+            Branch: ${env.GIT_BRANCH_NAME}
+            Commit: ${env.COMMIT_SHA}
+            Check the logs for details.
+            ==========================================
+            """
         }
     }
 }
