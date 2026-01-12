@@ -9,7 +9,7 @@ pipeline {
         API_IMAGE = "${DOCKER_USERNAME}/${APP_NAME}-api"
         WEB_IMAGE = "${DOCKER_USERNAME}/${APP_NAME}-web"
         TRIVY_SEVERITY = 'CRITICAL'
-        TRIVY_EXIT_CODE = '0'  // Set to '1' to fail on vulnerabilities
+        TRIVY_EXIT_CODE = '1'  // Fail on critical vulnerabilities
     }
 
     options {
@@ -111,9 +111,6 @@ pipeline {
         }
 
         stage('Push Docker Images') {
-            when {
-                expression { env.GIT_BRANCH_NAME == 'main' || env.BRANCH_NAME == 'main' }
-            }
             steps {
                 script {
                     withCredentials([usernamePassword(
