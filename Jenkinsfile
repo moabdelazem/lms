@@ -10,6 +10,7 @@ pipeline {
         WEB_IMAGE = "${DOCKER_USERNAME}/${APP_NAME}-web"
         TRIVY_SEVERITY = 'CRITICAL'
         TRIVY_EXIT_CODE = '1'  // Fail on critical vulnerabilities
+        DOCKER_BUILDKIT = '1'
     }
 
     options {
@@ -43,11 +44,12 @@ pipeline {
                 }
             }
             environment {
-                NPM_CONFIG_CACHE = "${WORKSPACE}/.npm"
+                NPM_CONFIG_CACHE = "${WORKSPACE}/.npm-cache"
+                HOME = "${WORKSPACE}"
             }
             steps {
                 dir('api') {
-                    sh 'npm ci'
+                    sh 'npm ci --prefer-offline'
                     sh 'npm run lint'
                     sh 'npm audit --audit-level=critical || true'
                 }
@@ -59,14 +61,27 @@ pipeline {
                 stage('Build API Image') {
                     steps {
                         script {
-                            docker.build("${API_IMAGE}:${BUILD_TAG}", "-f api/Dockerfile api")
+                            sh """
+                                docker build \
+                                    --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                    --cache-from ${API_IMAGE}:latest \
+                                    -t ${API_IMAGE}:${BUILD_TAG} \
+                                    -f api/Dockerfile api
+                            """
                         }
                     }
                 }
                 stage('Build Web Image') {
                     steps {
                         script {
-                            docker.build("${WEB_IMAGE}:${BUILD_TAG}", "--build-arg VITE_API_URL=/api -f web/Dockerfile web")
+                            sh """
+                                docker build \
+                                    --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                    --build-arg VITE_API_URL=/api \
+                                    --cache-from ${WEB_IMAGE}:latest \
+                                    -t ${WEB_IMAGE}:${BUILD_TAG} \
+                                    -f web/Dockerfile web
+                            """
                         }
                     }
                 }
@@ -118,17 +133,27 @@ pipeline {
                         usernameVariable: 'DOCKER_USER',
                         passwordVariable: 'DOCKER_PASS'
                     )]) {
-                        sh 'echo $DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u $DOCKER_USER --password-stdin'
+                        // Use double quotes to ensure variable expansion
+                        sh "echo \"\${DOCKER_PASS}\" | docker login ${DOCKER_REGISTRY} -u \"\${DOCKER_USER}\" --password-stdin"
                         
-                        // Tag and push API images
-                        sh "docker tag ${API_IMAGE}:${BUILD_TAG} ${API_IMAGE}:latest"
-                        sh "docker push ${API_IMAGE}:${BUILD_TAG}"
-                        sh "docker push ${API_IMAGE}:latest"
+                        echo "Docker login successful, pushing images..."
                         
-                        // Tag and push Web images
-                        sh "docker tag ${WEB_IMAGE}:${BUILD_TAG} ${WEB_IMAGE}:latest"
-                        sh "docker push ${WEB_IMAGE}:${BUILD_TAG}"
-                        sh "docker push ${WEB_IMAGE}:latest"
+                        // Tag and push API images with retry
+                        retry(3) {
+                            sh "docker tag ${API_IMAGE}:${BUILD_TAG} ${API_IMAGE}:latest"
+                            sh "docker push ${API_IMAGE}:${BUILD_TAG}"
+                            sh "docker push ${API_IMAGE}:latest"
+                        }
+                        
+                        // Tag and push Web images with retry
+                        retry(3) {
+                            sh "docker tag ${WEB_IMAGE}:${BUILD_TAG} ${WEB_IMAGE}:latest"
+                            sh "docker push ${WEB_IMAGE}:${BUILD_TAG}"
+                            sh "docker push ${WEB_IMAGE}:latest"
+                        }
+                        
+                        // Logout after push
+                        sh "docker logout ${DOCKER_REGISTRY}"
                     }
                     
                     echo "Successfully pushed images to ${DOCKER_REGISTRY}"
@@ -140,14 +165,11 @@ pipeline {
     post {
         always {
             script {
-                // Clean up built images
+                // Only remove build-specific tags, KEEP :latest for cache
                 sh "docker rmi ${API_IMAGE}:${BUILD_TAG} || true"
-                sh "docker rmi ${API_IMAGE}:latest || true"
                 sh "docker rmi ${WEB_IMAGE}:${BUILD_TAG} || true"
-                sh "docker rmi ${WEB_IMAGE}:latest || true"
                 
-                // Prune unused Docker resources
-                sh 'docker system prune -f || true'
+                sh 'docker image prune -f --filter "until=24h" || true'
             }
             cleanWs()
         }
